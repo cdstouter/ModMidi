@@ -1,9 +1,3 @@
-/*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
-
 /* 
  * File:   Utilities.cpp
  * Author: caleb
@@ -27,16 +21,12 @@ std::string urlEncode(const std::string &value) {
     escaped.fill('0');
     escaped << std::hex;
 
-    //for (string::const_iterator i = value.begin(), n = value.end(); i != n; ++i) {
     for (auto &c : value) {
-        //string::value_type c = (*i);
-
         // Keep alphanumeric and other accepted characters intact
         if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
             escaped << c;
             continue;
         }
-
         // Any other characters are percent-encoded
         escaped << std::uppercase;
         escaped << '%' << std::setw(2) << int((unsigned char) c);
