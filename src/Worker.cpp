@@ -38,7 +38,7 @@ Worker::~Worker() {
 
 void Worker::start() {
     worker_quit = false;
-    worker_thread = std::thread([=] {process();});
+    worker_thread = std::thread([=] {doWork();});
 }
 
 void Worker::stop() {
@@ -48,11 +48,11 @@ void Worker::stop() {
 
 // called on the jack realtime thread
 bool Worker::midiInput(void* port_buf, jack_nframes_t nframes) {
-    std::unique_lock<std::mutex> lock(m_midiInputEvents);
-
     jack_midi_event_t in_event;
     jack_nframes_t event_count = jack_midi_get_event_count(port_buf);
     if (event_count == 0) return true;
+
+    std::unique_lock<std::mutex> lock(m_midiInputEvents);
     for (jack_nframes_t i=0; i<event_count; i++) {
         jack_midi_event_get(&in_event, port_buf, i);
         // filter out tap tempo button events & deal with them directly
@@ -86,15 +86,15 @@ bool Worker::midiOutput(void* port_buf, jack_nframes_t nframes) {
     return true;
 }
 
-void Worker::process() {
+void Worker::doWork() {
+    // variables used in the worker loop
+    bool needsStatusUpdate;
+    bool hasNewTempo;
+    double newTempo;
+    // start the loop
     while(!worker_quit) {
         // do midi events need to be processed?
-        bool hasInput, needsStatusUpdate;
-        {
-            std::lock_guard<std::mutex> guard(m_midiInputEvents);
-            hasInput = midiInputEvents.size() > 0;
-        }
-        if (hasInput) processMidi();
+        processMidi();
         // do we need a status update?
         {
             std::lock_guard<std::mutex> guard(m_nextStatusUpdate);
@@ -102,8 +102,6 @@ void Worker::process() {
         }
         if (needsStatusUpdate) statusUpdate();
         // do we need to send the Mod the new tempo?
-        bool hasNewTempo;
-        double newTempo;
         {
             std::lock_guard<std::mutex> guard(m_tapTempo);
             hasNewTempo = tapTempoSendUpdate;
@@ -111,7 +109,8 @@ void Worker::process() {
             tapTempoSendUpdate = false;
         }
         if (hasNewTempo) sendNewTempo(newTempo);
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     cout << "thread exiting" << endl;
 }
@@ -127,42 +126,44 @@ void Worker::sendNewTempo(double tempo) {
 
 void Worker::processMidi() {
     MidiEvent e;
+    std::deque<MidiEvent> events;
     while(true) {
         {
             std::lock_guard<std::mutex> guard(m_midiInputEvents);
             if (midiInputEvents.size() == 0) break;
-            e = midiInputEvents.front();
-            midiInputEvents.pop_front();
+            events = midiInputEvents;
+            midiInputEvents.clear();
         }
         // anything below this line can take as long as it needs
-        //e.print();
-        bool updateLights = false, updateStatus = false;
-        if (e.eventType == MidiEvent::CC && e.data1 == 104) {
-            // bank up button pressed
-            if (e.data2 == 10) {
-                std::lock_guard<std::mutex> guard(m_status);
-                pedalboardOffset += 5;
-                if (pedalboardOffset >= pedalboardList.size()) pedalboardOffset = 0;
-                updateLights = true;
-            }
-            // preset button pressed
-            if (e.data2 >= 1 && e.data2 <= 5) {
-                updateLights = loadPreset(e.data2 - 1);
-            }
-            // pedalboard button pressed
-            if ((e.data2 >= 6 && e.data2 <= 9) || e.data2 == 0) {
-                int pedalboard = e.data2 > 0 ? e.data2 - 6 : 4;
-                {
+        for (auto &e : events) {
+            bool updateLights = false, updateStatus = false;
+            if (e.eventType == MidiEvent::CC && e.data1 == 104) {
+                // bank up button pressed
+                if (e.data2 == 10) {
                     std::lock_guard<std::mutex> guard(m_status);
-                    pedalboard += pedalboardOffset;
+                    pedalboardOffset += 5;
+                    if (pedalboardOffset >= pedalboardList.size()) pedalboardOffset = 0;
+                    updateLights = true;
                 }
-                updateStatus = loadPedalboard(pedalboard);
+                // preset button pressed
+                if (e.data2 >= 1 && e.data2 <= 5) {
+                    updateLights = loadPreset(e.data2 - 1);
+                }
+                // pedalboard button pressed
+                if ((e.data2 >= 6 && e.data2 <= 9) || e.data2 == 0) {
+                    int pedalboard = e.data2 > 0 ? e.data2 - 6 : 4;
+                    {
+                        std::lock_guard<std::mutex> guard(m_status);
+                        pedalboard += pedalboardOffset;
+                    }
+                    updateStatus = loadPedalboard(pedalboard);
+                }
             }
-        }
-        if (updateStatus) {
-            statusUpdate();
-        } else if (updateLights) {
-            fcbUpdate();
+            if (updateStatus) {
+                statusUpdate();
+            } else if (updateLights) {
+                fcbUpdate();
+            }
         }
     }
 }
@@ -376,7 +377,6 @@ void Worker::tapTempoPause() {
 }
 
 void Worker::tapTempoPlay() {
-    //std::this_thread::sleep_for(std::chrono::milliseconds(10));
     std::lock_guard<std::mutex> guard(m_tapTempo);
     tapTempoPaused = false;
     tapTempoLastTime = -1;

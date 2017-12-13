@@ -40,7 +40,7 @@ private:
     std::mutex m_midiInputEvents, m_midiOutputEvents;
     jack_client_t *client;
     jack_port_t *inputPort, *outputPort;
-    void process();
+    void doWork();
     void processMidi();
     std::thread worker_thread;
     bool worker_quit = false;
