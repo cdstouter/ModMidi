@@ -1,11 +1,10 @@
 NAME=ModMidi
-CXX=g++
-RM=rm -f
-CPPFLAGS=-std=c++11
-LDFLAGS=
+CXX ?= g++
+RM ?= rm -f
 
 # library dependencies
-CPPFLAGS += `pkg-config --cflags jack jansson`
+CXXFLAGS += -std=c++11
+CXXFLAGS += `pkg-config --cflags jack jansson`
 LDFLAGS += `pkg-config --libs jack jansson`
 
 SRCS=$(wildcard src/*.cpp)
