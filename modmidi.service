@@ -1,0 +1,16 @@
+[Unit]
+Description=ModMidi
+After=mod-ui.service
+
+[Service]
+Type=simple
+ExecStart=/root/ModMidi
+Restart=always
+User=root
+Group=root
+Nice=-17
+#StandardOutput=tty
+#StandardError=tty
+
+[Install]
+WantedBy=multi-user.target
