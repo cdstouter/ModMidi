@@ -16,12 +16,13 @@
 
 using namespace std;
 
-// when debug is true, we pretend to connect to the Mod Duo
-static const bool debug = false;
-static const bool flashTempo = true;
-static int debugCurrentPedalboard = 0;
-static int debugCurrentPreset = 0;
-static double debugCurrentBPM = 120.0;
+void Worker::setDebugMode(bool debugMode) {
+    debug = debugMode;
+}
+
+void Worker::setTempoLight(bool tempoLight) {
+    tempoLightEnabled = tempoLight;
+}
 
 Worker::Worker(jack_client_t *client, jack_port_t *inputPort, jack_port_t *outputPort) {
     this->client = client;
@@ -385,52 +386,48 @@ void Worker::tapTempoPlay() {
 // called from the jack realtime thread with a lock already on midiOutputEvents
 void Worker::tapTempoProcess(jack_nframes_t nframes) {
     std::lock_guard<std::mutex> guard(m_tapTempo);
+    if (tapTempoLastTime >= 0) tapTempoLastTime += nframes;
+    if (tapTempoLastTime > (sampleRate * 2)) {
+        tapTempoLastTime = -1;
+        tapTempoBPMs.clear();
+    }
+    if (!tempoLightEnabled) return;
+    // everything below this line only runs if the tempo light is enabled
     if (tapTempoPaused || tapTempoLength == 0) {
         if (tapTempoLightOn) {
             // turn it off
-            if (flashTempo) {
-                MidiEvent e;
-                e.eventType = MidiEvent::CC;
-                e.data1 = 107;
-                e.data2 = 16;
-                midiOutputEvents.push_back(e);
-                tapTempoLightOn = false;
-            }
+            MidiEvent e;
+            e.eventType = MidiEvent::CC;
+            e.data1 = 107;
+            e.data2 = 16;
+            midiOutputEvents.push_back(e);
+            tapTempoLightOn = false;
         }
         return;
     }
     if (tapTempoNextOn < nframes) {
-        if (flashTempo) {
-            MidiEvent e;
-            e.eventType = MidiEvent::CC;
-            e.data1 = 106;
-            e.data2 = 16;
-            e.time = tapTempoNextOn;
-            midiOutputEvents.push_back(e);
-        }
+        MidiEvent e;
+        e.eventType = MidiEvent::CC;
+        e.data1 = 106;
+        e.data2 = 16;
+        e.time = tapTempoNextOn;
+        midiOutputEvents.push_back(e);
         tapTempoLightOn = true;
         tapTempoNextOn += tapTempoLength;
     } else {
         tapTempoNextOn -= nframes;
     }
     if (tapTempoNextOff < nframes) {
-        if (flashTempo) {
-            MidiEvent e;
-            e.eventType = MidiEvent::CC;
-            e.data1 = 107;
-            e.data2 = 16;
-            e.time = tapTempoNextOff;
-            midiOutputEvents.push_back(e);
-        }
+        MidiEvent e;
+        e.eventType = MidiEvent::CC;
+        e.data1 = 107;
+        e.data2 = 16;
+        e.time = tapTempoNextOff;
+        midiOutputEvents.push_back(e);
         tapTempoLightOn = false;
         tapTempoNextOff += tapTempoLength;
     } else {
         tapTempoNextOff -= nframes;
-    }
-    if (tapTempoLastTime >= 0) tapTempoLastTime += nframes;
-    if (tapTempoLastTime > (sampleRate * 2)) {
-        tapTempoLastTime = -1;
-        tapTempoBPMs.clear();
     }
 }
 

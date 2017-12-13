@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <jack/jack.h>
 #include <jack/midiport.h>
+#include <getopt.h>
 
 #include "Worker.h"
 
@@ -91,11 +92,76 @@ bool connectPorts(std::string inputPortRegEx, std::string outputPortRegEx) {
 
 int main(int argc, char** argv) {
     
+    // try getopt
+    static struct option long_options[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"hostname", required_argument, NULL, 'n'},
+        {"input", required_argument, NULL, 'i'},
+        {"output", required_argument, NULL, 'o'},
+        {"flash", no_argument, NULL, 'f'},
+        {"debug", no_argument, NULL, 'd'},
+        {0, 0, 0, 0}
+    };
+    
+    int option_index = 0;
+    int c;
+    bool optionHelp = false;
+    bool optionFlash = false;
+    bool parseError = false;
+    bool optionDebug = false;
+    std::string optionHostname, optionInput, optionOutput;
+    while ((c = getopt_long(argc, argv, "hn:i:o:f", long_options, &option_index)) != -1) {
+        switch(c) {
+            case 'h':
+                optionHelp = true;
+                break;
+            case 'n':
+                optionHostname = std::string(optarg);
+                break;
+            case 'i':
+                optionInput = std::string(optarg);
+                break;
+            case 'o':
+                optionOutput = std::string(optarg);
+                break;
+            case 'f':
+                optionFlash = true;
+                break;
+            case 'd':
+                optionDebug = true;
+                break;
+            case '?':
+                optionHelp = true;
+                parseError = true;
+                break;
+        }
+    }
+    if (optind < argc) {
+        std::cout << "Unexpected arguments found." << std::endl;
+        optionHelp = true;
+        parseError = true;
+    }
+    
+    if (optionHelp) {
+        // display help information
+        std::cout << std::endl;
+        std::cout << "ModMidi command line options:" << std::endl << std::endl;
+        std::cout << "    -h, --help           display this help information" << std::endl;
+        std::cout << "    -n, --hostname HOST  set the hostname of the Mod Duo" << std::endl;
+        std::cout << "    -i, --input PORT     jack midi input port to use (regex)" << std::endl;
+        std::cout << "    -o, --output PORT    jack midi output port to use (regex)" << std::endl;
+        std::cout << "    -f, --flash          enable flashing tempo light" << std::endl;
+        std::cout << "    -d, --debug          pretend to connect to the Mod" << std::endl;
+        return parseError ? -1 : 0;
+    }
+    
     // set up signal handling
     signal(SIGQUIT, signal_handler);
     signal(SIGHUP, signal_handler);
     signal(SIGTERM, signal_handler);
     signal(SIGINT, signal_handler);
+    
+    cout << "Starting ModMidi..." << endl;
     
     // start up our Jack client
     client = jack_client_open("ModMidi", JackNoStartServer, NULL);
@@ -104,8 +170,6 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-    cout << "starting program..." << endl;
-    
     jack_set_process_callback(client, process, 0);
     input_port = jack_port_register(client, "input", JACK_DEFAULT_MIDI_TYPE, JackPortIsInput, 0);
     output_port = jack_port_register(client, "output", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
@@ -115,15 +179,24 @@ int main(int argc, char** argv) {
         return -1;
     }
     // connect the ports
-    //bool connected = connectPorts("UMC204", "UMC204"); // desktop UMC204
-    bool connected = connectPorts("ttymidi:MIDI_in", "ttymidi:MIDI_out"); // Mod Duo
+    string inputPort = optionInput.size() > 0 ? optionInput : "ttymidi:MIDI_in";
+    string outputPort = optionOutput.size() > 0 ? optionOutput : "ttymidi:MIDI_out";
+    cout << "Attempting to connect to ports:" << endl << inputPort << endl << outputPort << endl;
+    bool connected = connectPorts(inputPort, outputPort);
     if (!connected) {
-        cout << "unable to connect ports" << endl;
+        cout << "Unable to connect ports." << endl;
         jack_client_close(client);
         return -1;
     }
     Worker *workerTemp = new Worker(client, input_port, output_port);
-    //workerTemp->setHostname("modduo.local"); // desktop testing
+    if (optionHostname.size() > 0) {
+        cout << "Using Mod Duo hostname: " << optionHostname << endl;
+        workerTemp->setHostname(optionHostname);
+    } else {
+        cout << "Using Mod Duo hostname: localhost" << endl;
+    }
+    workerTemp->setDebugMode(optionDebug);
+    workerTemp->setTempoLight(optionFlash);
     workerTemp->start();
     worker = workerTemp;
     workerTemp = NULL;
