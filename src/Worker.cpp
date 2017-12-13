@@ -50,7 +50,6 @@ bool Worker::midiInput(void* port_buf, jack_nframes_t nframes) {
     std::unique_lock<std::mutex> lock(m_midiInputEvents);
 
     jack_midi_event_t in_event;
-    jack_nframes_t event_index = 0;
     jack_nframes_t event_count = jack_midi_get_event_count(port_buf);
     if (event_count == 0) return true;
     for (jack_nframes_t i=0; i<event_count; i++) {
@@ -78,7 +77,7 @@ bool Worker::midiOutput(void* port_buf, jack_nframes_t nframes) {
         std::vector<unsigned char> buf = e.getBuffer();
         if (buf.size()) {
             unsigned char* buffer = jack_midi_event_reserve(port_buf, e.time, buf.size());
-            for (int i=0; i<buf.size(); i++) {
+            for (size_t i=0; i<buf.size(); i++) {
                 buffer[i] = buf.at(i);
             }
         }
@@ -187,12 +186,12 @@ void Worker::setHostname(std::string hostname) {
     this->hostname = hostname;
 }
 
-bool Worker::loadPedalboard(int pedalboard) {
+bool Worker::loadPedalboard(unsigned int pedalboard) {
     //std::cout << "load pedalboard " << pedalboard << std::endl;
     tapTempoPause();
     {
         std::lock_guard<std::mutex> guard(m_status);
-        if (pedalboard < 0 || pedalboard >= pedalboardList.size()) return false;
+        if (pedalboard >= pedalboardList.size()) return false;
     }
     if (debug) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
@@ -206,10 +205,10 @@ bool Worker::loadPedalboard(int pedalboard) {
     }
 }
 
-bool Worker::loadPreset(int preset) {
+bool Worker::loadPreset(unsigned int preset) {
     {
         std::lock_guard<std::mutex> guard(m_status);
-        if (preset < 0 || preset >= presetList.size()) return false;
+        if (preset >= presetList.size()) return false;
     }
     if (debug) {
         debugCurrentPreset = preset;
@@ -254,7 +253,7 @@ void Worker::statusUpdate() {
     } else {
         std::lock_guard<std::mutex> guard(m_status);
         std::cout << "Current bank:" << std::endl;
-        for (int i=0; i<pedalboardList.size(); i++) {
+        for (size_t i=0; i<pedalboardList.size(); i++) {
             std::cout << std::to_string(i) << ": " << pedalboardList.at(i).title << std::endl;
         }
         if (pedalboardList.size() == 0) {
@@ -280,7 +279,7 @@ void Worker::statusUpdate() {
     } else {
         std::lock_guard<std::mutex> guard(m_status);
         std::cout << "Preset list:" << std::endl;
-        for (int i=0; i<presetList.size(); i++) {
+        for (size_t i=0; i<presetList.size(); i++) {
             std::cout << std::to_string(i) << ": " << presetList.at(i) << std::endl;
         }
         if (presetList.size() == 0) {
@@ -304,7 +303,7 @@ void Worker::statusUpdate() {
     } else {
         std::lock_guard<std::mutex> guard(m_status);
         // make sure the pedalboard offset is within range
-        if (pedalboardOffset < 0 || pedalboardOffset >= pedalboardList.size()) {
+        if (pedalboardOffset >= pedalboardList.size()) {
             if (currentPedalboard < 0) {
                 pedalboardOffset = 0;
             } else {
@@ -354,12 +353,12 @@ void Worker::fcbUpdate() {
     // update the LEDs
     for (int i=0; i<5; i++) {
         fcbLights.setPedal(i, i == currentPreset);
-        fcbLights.setPedal(i + 5, (i + pedalboardOffset) == currentPedalboard);
+        fcbLights.setPedal(i + 5, (i + (int)pedalboardOffset) == currentPedalboard);
     }
     for (int i=0; i<13; i++) {
         fcbLights.setMiscLight(i, false);
     }
-    if (currentPedalboard >= pedalboardOffset && (currentPedalboard - pedalboardOffset) < 5) {
+    if (currentPedalboard >= (int)pedalboardOffset && (currentPedalboard - (int)pedalboardOffset) < 5) {
         fcbLights.setMiscLight(12, false);
         fcbLights.setDigits(currentPedalboard + 1);
     } else {

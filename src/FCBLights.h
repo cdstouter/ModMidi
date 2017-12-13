@@ -33,9 +33,9 @@ public:
     FCBLights();
     virtual ~FCBLights();
     
-    void setPedal(int pedalNum, bool state);
-    void setMiscLight(int lightNum, bool state);
-    void setDigits(int state);
+    void setPedal(unsigned int pedalNum, bool state);
+    void setMiscLight(unsigned int lightNum, bool state);
+    void setDigits(unsigned int state);
     
     void markAllDirty();
     
@@ -44,7 +44,7 @@ private:
     std::mutex m_access;
     std::vector<Light<bool>> pedals;
     std::vector<Light<bool>> miscLights;
-    Light<int> digits{0};
+    Light<unsigned int> digits{0};
 };
 
 #endif /* FCBLIGHTS_H */

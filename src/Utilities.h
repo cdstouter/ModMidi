@@ -8,7 +8,7 @@
 #ifndef UTILITIES_H
 #define UTILITIES_H
 
-#include "http.h"
+#include "http_wrapper.h"
 
 #include <string>
 #include <mutex>

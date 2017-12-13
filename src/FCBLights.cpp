@@ -54,19 +54,19 @@ FCBLights::FCBLights() {
 FCBLights::~FCBLights() {
 }
 
-void FCBLights::setPedal(int pedalNum, bool state) {
-    if (pedalNum < 0 || pedalNum >= pedals.size()) return;
+void FCBLights::setPedal(unsigned int pedalNum, bool state) {
+    if (pedalNum >= pedals.size()) return;
     std::lock_guard<std::mutex> guard(m_access);
     pedals.at(pedalNum).setValue(state);
 }
 
-void FCBLights::setMiscLight(int lightNum, bool state) {
-    if (lightNum < 0 || lightNum >= miscLights.size()) return;
+void FCBLights::setMiscLight(unsigned int lightNum, bool state) {
+    if (lightNum >= miscLights.size()) return;
     std::lock_guard<std::mutex> guard(m_access);
     miscLights.at(lightNum).setValue(state);
 }
 
-void FCBLights::setDigits(int state) {
+void FCBLights::setDigits(unsigned int state) {
     std::lock_guard<std::mutex> guard(m_access);
     digits.setValue(state);
 }
@@ -85,7 +85,7 @@ void FCBLights::markAllDirty() {
 std::vector<MidiEvent> FCBLights::getMidiEvents() {
     std::lock_guard<std::mutex> guard(m_access);
     std::vector<MidiEvent> events;
-    for (int i=0; i<pedals.size(); i++) {
+    for (size_t i=0; i<pedals.size(); i++) {
         auto &pedal = pedals.at(i);
         if (pedal.isDirty()) {
             pedal.setDirty(false);
@@ -96,7 +96,7 @@ std::vector<MidiEvent> FCBLights::getMidiEvents() {
             events.push_back(e);
         }
     }
-    for (int i=0; i<miscLights.size(); i++) {
+    for (size_t i=0; i<miscLights.size(); i++) {
         auto &light = miscLights.at(i);
         if (light.isDirty()) {
             light.setDirty(false);

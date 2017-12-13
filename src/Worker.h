@@ -46,8 +46,8 @@ private:
     bool needToUpdateLEDS = false;
     std::mutex m_needToUpdateLEDS;
     
-    bool loadPreset(int preset);
-    bool loadPedalboard(int pedalboard);
+    bool loadPreset(unsigned int preset);
+    bool loadPedalboard(unsigned int pedalboard);
     void statusUpdate();
     void fcbUpdate();
     void sendNewTempo(double tempo);
@@ -58,7 +58,7 @@ private:
     int currentPedalboard = -1;
     int currentPreset = -1;
     int sampleRate = 0;
-    int pedalboardOffset = 0;
+    unsigned int pedalboardOffset = 0;
     std::mutex m_status;
     
     // the following variables are all protected by m_tapTempo

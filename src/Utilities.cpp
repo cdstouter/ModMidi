@@ -161,7 +161,7 @@ bool getPedalboardList(std::string hostname, std::vector<ModPedalboard> &pedalbo
     }
 
     std::vector<ModPedalboard> tempPedalboardList;
-    for (int i=0; i<json_array_size(pedalboards); i++) {
+    for (size_t i=0; i<json_array_size(pedalboards); i++) {
         json_t *data = json_array_get(pedalboards, i);
         if (!json_is_object(data)) {
             std::cout << "getPedalboardList: pedalboard is not an object" << std::endl;
@@ -254,7 +254,7 @@ bool getCurrentPedalboardAndPreset(std::string hostname, std::vector<ModPedalboa
     if (mutex) std::lock_guard<std::mutex> guard(*mutex);
     std::string path = json_string_value(json_path);
     currentPedalboard = -1;
-    for (int i=0; i<pedalboardList.size(); i++) {
+    for (size_t i=0; i<pedalboardList.size(); i++) {
         if (pedalboardList.at(i).bundle == path) {
             currentPedalboard = i;
             break;

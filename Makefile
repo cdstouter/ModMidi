@@ -3,7 +3,7 @@ CXX ?= g++
 RM ?= rm -f
 
 # library dependencies
-CXXFLAGS += -std=c++11
+CXXFLAGS += -std=c++11 -Wall
 CXXFLAGS += `pkg-config --cflags jack jansson`
 LDFLAGS += `pkg-config --libs jack jansson`
 
