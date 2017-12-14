@@ -16,8 +16,12 @@
 
 using namespace std;
 
-void Worker::setDebugMode(bool debugMode) {
-    debug = debugMode;
+void Worker::setDebug(bool debug) {
+    this->debug = debug;
+}
+
+void Worker::setSimulate(bool simulate) {
+    this->simulate = simulate;
 }
 
 void Worker::setTempoLight(bool tempoLight) {
@@ -116,7 +120,7 @@ void Worker::doWork() {
 }
 
 void Worker::sendNewTempo(double tempo) {
-    if (debug) {
+    if (simulate) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         std::cout << "sent new tempo: " << tempo << std::endl;
     } else {
@@ -195,11 +199,11 @@ bool Worker::loadPedalboard(unsigned int pedalboard) {
         std::lock_guard<std::mutex> guard(m_status);
         if (pedalboard >= pedalboardList.size()) return false;
     }
-    if (debug) {
+    if (simulate) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        debugCurrentPedalboard = pedalboard;
-        debugCurrentPreset = 0;
-        debugCurrentBPM = 120;
+        simulateCurrentPedalboard = pedalboard;
+        simulateCurrentPreset = 0;
+        simulateCurrentBPM = 120;
         return true;
     } else {
         std::lock_guard<std::mutex> guard(m_status);
@@ -212,11 +216,11 @@ bool Worker::loadPreset(unsigned int preset) {
         std::lock_guard<std::mutex> guard(m_status);
         if (preset >= presetList.size()) return false;
     }
-    if (debug) {
-        debugCurrentPreset = preset;
+    if (simulate) {
+        simulateCurrentPreset = preset;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         std::lock_guard<std::mutex> guard(m_status);
-        currentPreset = debugCurrentPreset;
+        currentPreset = simulateCurrentPreset;
         return true;
     } else {
         if (!::loadPreset(hostname, preset)) return false;
@@ -231,7 +235,7 @@ void Worker::statusUpdate() {
     std::string url;
     bool status;
     
-    if (debug) {
+    if (simulate) {
         status = true;
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         std::lock_guard<std::mutex> guard(m_status);
@@ -248,11 +252,8 @@ void Worker::statusUpdate() {
     } else {
         status = getPedalboardList(hostname, pedalboardList, &m_status);
     }
-    if (!status) {
-        std::cout << "Error getting current bank" << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        return;
-    } else {
+    if (!status) std::cout << "Error getting current bank" << std::endl;
+    if (debug) {
         std::lock_guard<std::mutex> guard(m_status);
         std::cout << "Current bank:" << std::endl;
         for (size_t i=0; i<pedalboardList.size(); i++) {
@@ -263,7 +264,7 @@ void Worker::statusUpdate() {
         }
     }
 
-    if (debug) {
+    if (simulate) {
         status = true;
         std::this_thread::sleep_for(std::chrono::milliseconds(15));
         std::lock_guard<std::mutex> guard(m_status);
@@ -274,11 +275,8 @@ void Worker::statusUpdate() {
     } else {
         status = getPresetList(hostname, presetList, &m_status);
     }
-    if (!status) {
-        std::cout << "Error getting preset list" << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        return;
-    } else {
+    if (!status) std::cout << "Error getting preset list" << std::endl;
+    if (debug) {
         std::lock_guard<std::mutex> guard(m_status);
         std::cout << "Preset list:" << std::endl;
         for (size_t i=0; i<presetList.size(); i++) {
@@ -289,29 +287,18 @@ void Worker::statusUpdate() {
         }
     }
     
-    if (debug) {
+    if (simulate) {
         status = true;
         std::this_thread::sleep_for(std::chrono::milliseconds(15));
         std::lock_guard<std::mutex> guard(m_status);
-        currentPedalboard = debugCurrentPedalboard;
-        currentPreset = debugCurrentPreset;
+        currentPedalboard = simulateCurrentPedalboard;
+        currentPreset = simulateCurrentPreset;
     } else {
-        status = getCurrentPedalboardAndPreset(hostname, pedalboardList, currentPedalboard, currentPreset, &m_status);
+        status = getCurrentPedalboardAndPreset(hostname, pedalboardList, currentPedalboard, currentPreset, pedalboardOffset, &m_status);
     }
-    if (!status) {
-        std::cout << "Error getting current pedalboard & preset" << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        return;
-    } else {
-        std::lock_guard<std::mutex> guard(m_status);
-        // make sure the pedalboard offset is within range
-        if (pedalboardOffset >= pedalboardList.size()) {
-            if (currentPedalboard < 0) {
-                pedalboardOffset = 0;
-            } else {
-                pedalboardOffset = (currentPedalboard / 5) * 5;
-            }
-        }
+    if (!status) std::cout << "Error getting current pedalboard & preset" << std::endl;
+
+    if (debug) {
         std::cout << "Current pedalboard: " << std::to_string(currentPedalboard) << std::endl;
         if (currentPedalboard >= 0) {
             std::cout << pedalboardList.at(currentPedalboard).title << std::endl;
@@ -327,19 +314,20 @@ void Worker::statusUpdate() {
     }
     
     double bpm;
-    if (debug) {
+    if (simulate) {
         status = true;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        bpm = debugCurrentBPM;
+        bpm = simulateCurrentBPM;
     } else {
         status = getCurrentBPM(hostname, bpm, NULL);
     }
-    if (!status) {
-        std::cout << "Error getting current BPM" << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        return;
-    } else {
+    if (status) {
+        if (debug) {
+            std::cout << "Current BPM: " << bpm << std::endl;
+        }
         tapTempoSetBPM(bpm);
+    } else {
+        std::cout << "Error getting current BPM" << std::endl;
     }
 
     {

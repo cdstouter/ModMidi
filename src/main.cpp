@@ -100,6 +100,7 @@ int main(int argc, char** argv) {
         {"output", required_argument, NULL, 'o'},
         {"flash", no_argument, NULL, 'f'},
         {"debug", no_argument, NULL, 'd'},
+        {"simulate", no_argument, NULL, 's'},
         {0, 0, 0, 0}
     };
     
@@ -109,6 +110,7 @@ int main(int argc, char** argv) {
     bool optionFlash = false;
     bool parseError = false;
     bool optionDebug = false;
+    bool optionSimulate = false;
     std::string optionHostname, optionInput, optionOutput;
     while ((c = getopt_long(argc, argv, "hn:i:o:f", long_options, &option_index)) != -1) {
         switch(c) {
@@ -130,6 +132,8 @@ int main(int argc, char** argv) {
             case 'd':
                 optionDebug = true;
                 break;
+            case 's':
+                optionSimulate = true;
             case '?':
                 optionHelp = true;
                 parseError = true;
@@ -151,7 +155,8 @@ int main(int argc, char** argv) {
         std::cout << "    -i, --input PORT     jack midi input port to use (regex)" << std::endl;
         std::cout << "    -o, --output PORT    jack midi output port to use (regex)" << std::endl;
         std::cout << "    -f, --flash          enable flashing tempo light" << std::endl;
-        std::cout << "    -d, --debug          pretend to connect to the Mod" << std::endl;
+        std::cout << "    -d, --debug          print some debugging information" << std::endl;
+        std::cout << "    -s, --simulate       pretend to connect to the Mod" << std::endl;
         return parseError ? -1 : 0;
     }
     
@@ -195,7 +200,8 @@ int main(int argc, char** argv) {
     } else {
         cout << "Using Mod Duo hostname: localhost" << endl;
     }
-    workerTemp->setDebugMode(optionDebug);
+    workerTemp->setSimulate(optionSimulate);
+    workerTemp->setDebug(optionDebug);
     workerTemp->setTempoLight(optionFlash);
     workerTemp->start();
     worker = workerTemp;

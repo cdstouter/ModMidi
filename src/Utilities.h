@@ -31,7 +31,7 @@ bool getPedalboardList(std::string hostname, std::vector<ModPedalboard> &pedalbo
 
 bool getPresetList(std::string hostname, std::vector<std::string> &presetList, std::mutex *mutex);
 
-bool getCurrentPedalboardAndPreset(std::string hostname, std::vector<ModPedalboard> pedalboardList, int &currentPedalboard, int &currentPreset, std::mutex *mutex);
+bool getCurrentPedalboardAndPreset(std::string hostname, std::vector<ModPedalboard> pedalboardList, int &currentPedalboard, int &currentPreset, unsigned int &pedalboardOffset, std::mutex *mutex);
 
 bool getCurrentBPM(std::string hostname, double &currentBPM, std::mutex *mutex);
 

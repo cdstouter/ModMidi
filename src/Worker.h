@@ -29,7 +29,8 @@ public:
     bool midiOutput(void* port_buf, jack_nframes_t nframes);
     void jackProcess(jack_nframes_t nframes);
     void setHostname(std::string hostname);
-    void setDebugMode(bool debugMode);
+    void setSimulate(bool simulate);
+    void setDebug(bool debug);
     void setTempoLight(bool tempoLight);
 private:
     std::string hostname = "localhost";
@@ -82,11 +83,14 @@ private:
     
     FCBLights fcbLights;
     
-    // debug mode stuff
+    // simulate mode stuff
+    bool simulate = false;
+    int simulateCurrentPedalboard = 0;
+    int simulateCurrentPreset = 0;
+    double simulateCurrentBPM = 120.0;
+    
+    // debugging stuff
     bool debug = false;
-    int debugCurrentPedalboard = 0;
-    int debugCurrentPreset = 0;
-    double debugCurrentBPM = 120.0;
 
     // is the tempo light enabled?
     bool tempoLightEnabled = false;

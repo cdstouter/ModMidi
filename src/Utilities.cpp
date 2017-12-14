@@ -118,9 +118,12 @@ bool modReset(std::string hostname) {
     }
     if (!json_is_boolean(root)) {
         std::cout << "modReset: root is not a boolean" << std::endl;
+        json_decref(root);
         return false;
     }
-    return json_boolean_value(root);
+    bool val = json_boolean_value(root);
+    json_decref(root);
+    return val;
 }
 
 bool getPedalboardList(std::string hostname, std::vector<ModPedalboard> &pedalboardList, std::mutex *mutex) {
@@ -133,30 +136,44 @@ bool getPedalboardList(std::string hostname, std::vector<ModPedalboard> &pedalbo
     status = httpGet(url, &response, &contentType);
     if (!status) {
         std::cout << "getPedalboardList HTTP error: " << response << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        pedalboardList.clear();
         return false;
     }
     json_error_t err;
     json_t *root = json_loads(response.c_str(), JSON_DECODE_ANY, &err);
     if (!root) {
         std::cout << "getPedalboardList: unable to parse JSON" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        pedalboardList.clear();
         return false;
     }
     if (json_is_null(root)) {
         // current bank is empty
         if (mutex) std::lock_guard<std::mutex> guard(*mutex);
         pedalboardList.clear();
+        json_decref(root);
         return true;
     } else if (!json_is_object(root)) {
         std::cout << "getPedalboardList: JSON root is not object or null" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        pedalboardList.clear();
+        json_decref(root);
         return false;
     }
     json_t *pedalboards = json_object_get(root, "pedalboards");
     if (!pedalboards) {
         std::cout << "getPedalboardList: no pedalboards array" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        pedalboardList.clear();
+        json_decref(root);
         return false;
     }
     if (!json_is_array(pedalboards)) {
         std::cout << "getPedalboardList: pedalboards is not an array" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        pedalboardList.clear();
+        json_decref(root);
         return false;
     }
 
@@ -165,6 +182,9 @@ bool getPedalboardList(std::string hostname, std::vector<ModPedalboard> &pedalbo
         json_t *data = json_array_get(pedalboards, i);
         if (!json_is_object(data)) {
             std::cout << "getPedalboardList: pedalboard is not an object" << std::endl;
+            if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+            pedalboardList.clear();
+            json_decref(root);
             return false;
         }
         json_t *title, *bundle;
@@ -172,10 +192,16 @@ bool getPedalboardList(std::string hostname, std::vector<ModPedalboard> &pedalbo
         bundle = json_object_get(data, "bundle");
         if (!title || !bundle) {
             std::cout << "getPedalboardList: could not find title & bundle in pedalboard" << std::endl;
+            if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+            pedalboardList.clear();
+            json_decref(root);
             return false;
         }
         if (!json_is_string(title) || !json_is_string(bundle)) {
             std::cout << "getPedalboardList: title & bundle aren't strings" << std::endl;
+            if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+            pedalboardList.clear();
+            json_decref(root);
             return false;
         }
         ModPedalboard mb;
@@ -185,6 +211,7 @@ bool getPedalboardList(std::string hostname, std::vector<ModPedalboard> &pedalbo
     }
     if (mutex) std::lock_guard<std::mutex> guard(*mutex);
     pedalboardList = tempPedalboardList;
+    json_decref(root);
     return true;
 }
 
@@ -198,16 +225,23 @@ bool getPresetList(std::string hostname, std::vector<std::string> &presetList, s
     status = httpGet(url, &response, &contentType);
     if (!status) {
         std::cout << "getPresetList HTTP error: " << response << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        presetList.clear();
         return false;
     }
     json_error_t err;
     json_t *root = json_loads(response.c_str(), JSON_DECODE_ANY, &err);
     if (!root) {
         std::cout << "getPresetList: unable to parse JSON" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        presetList.clear();
         return false;
     }
     if (!json_is_object(root)) {
         std::cout << "getPresetList: JSON root is not object or null" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        presetList.clear();
+        json_decref(root);
         return false;
     }
     
@@ -220,10 +254,11 @@ bool getPresetList(std::string hostname, std::vector<std::string> &presetList, s
         if (!json_is_string(preset)) break;
         presetList.push_back(json_string_value(preset));
     }
+    json_decref(root);
     return true;
 }
 
-bool getCurrentPedalboardAndPreset(std::string hostname, std::vector<ModPedalboard> pedalboardList, int &currentPedalboard, int &currentPreset, std::mutex *mutex) {
+bool getCurrentPedalboardAndPreset(std::string hostname, std::vector<ModPedalboard> pedalboardList, int &currentPedalboard, int &currentPreset, unsigned int &pedalboardOffset, std::mutex *mutex) {
     std::string response, contentType;
     std::string url;
     bool status;
@@ -233,22 +268,32 @@ bool getCurrentPedalboardAndPreset(std::string hostname, std::vector<ModPedalboa
     status = httpGet(url, &response, &contentType);
     if (!status) {
         std::cout << "getCurrentPedalboardAndPreset HTTP error: " << response << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        currentPedalboard = currentPreset = -1;
         return false;
     }
     json_error_t err;
     json_t *root = json_loads(response.c_str(), JSON_DECODE_ANY, &err);
     if (!root) {
         std::cout << "getCurrentPedalboardAndPreset: unable to parse JSON" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        currentPedalboard = currentPreset = -1;
         return false;
     }
     if (!json_is_object(root)) {
         std::cout << "getCurrentPedalboardAndPreset: root is not an object" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        currentPedalboard = currentPreset = -1;
+        json_decref(root);
         return false;
     }
     json_t *json_path = json_object_get(root, "path");
     json_t *json_preset = json_object_get(root, "preset");
     if (!json_path || !json_preset || !json_is_string(json_path) || !json_is_integer(json_preset)) {
         std::cout << "getCurrentPedalboardAndPreset: unable to find the correct data" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        currentPedalboard = currentPreset = -1;
+        json_decref(root);
         return false;
     }
     if (mutex) std::lock_guard<std::mutex> guard(*mutex);
@@ -261,6 +306,15 @@ bool getCurrentPedalboardAndPreset(std::string hostname, std::vector<ModPedalboa
         }
     }
     currentPreset = json_integer_value(json_preset);
+    // make sure the pedalboard offset is within range
+    if (pedalboardOffset >= pedalboardList.size()) {
+        if (currentPedalboard < 0) {
+            pedalboardOffset = 0;
+        } else {
+            pedalboardOffset = (currentPedalboard / 5) * 5;
+        }
+    }
+    json_decref(root);
     return true;
 }
 
@@ -284,10 +338,12 @@ bool getCurrentBPM(std::string hostname, double &currentBPM, std::mutex *mutex) 
     }
     if (!json_is_number(root)) {
         std::cout << "getCurrentBPM: root is not a number" << std::endl;
+        json_decref(root);
         return false;
     }
     if (mutex) std::lock_guard<std::mutex> guard(*mutex);
     currentBPM = json_number_value(root);
+    json_decref(root);
     return true;
 }
 
@@ -311,8 +367,10 @@ bool setBPM(std::string hostname, double bpm) {
     }
     if (!json_is_boolean(root)) {
         std::cout << "setBPM: root is not a boolean" << std::endl;
+        json_decref(root);
         return false;
     }
+    json_decref(root);
     return json_boolean_value(root);
 }
 
@@ -358,7 +416,10 @@ bool loadPedalboard(std::string hostname, int pedalboard) {
     }
     if (!json_is_boolean(root)) {
         std::cout << "loadPedalboard: root is not a boolean" << std::endl;
+        json_decref(root);
         return false;
     }
-    return json_boolean_value(root);
+    bool val = json_boolean_value(root);
+    json_decref(root);
+    return val;
 }
