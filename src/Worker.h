@@ -25,9 +25,9 @@ public:
     virtual ~Worker();
     void start();
     void stop();
-    bool midiInput(void* port_buf, jack_nframes_t nframes);
-    bool midiOutput(void* port_buf, jack_nframes_t nframes);
-    void jackProcess(jack_nframes_t nframes);
+    //bool midiInput(void* port_buf, jack_nframes_t nframes);
+    //bool midiOutput(void* port_buf, jack_nframes_t nframes);
+    void jackProcess(void* input_port_buf, void* output_port_buf, void* cc_port_buf, jack_nframes_t nframes);
     void setHostname(std::string hostname);
     void setSimulate(bool simulate);
     void setDebug(bool debug);

@@ -21,6 +21,7 @@ public:
     virtual ~MidiEvent();
     void print();
     std::vector<unsigned char> getBuffer();
+    static bool comparator(const MidiEvent &a, const MidiEvent &b);
     
     unsigned char channel = 0;
     

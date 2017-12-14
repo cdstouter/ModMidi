@@ -19,14 +19,17 @@
 using namespace std;
 
 jack_client_t *client = NULL;
+// these get connected to the Mod's serial MIDI input & output
 jack_port_t *input_port, *output_port;
+// this gets connected to mod-host to send CCs
+jack_port_t *mod_cc_port;
 
 Worker *worker = NULL;
 
 static void signal_handler(int sig) {
-    cerr << "signal received, exiting ..." << endl;
+    cerr << "Signal received, exiting ..." << endl;
     if (client != NULL) {
-        cout << "shutting down jack client..." << endl;
+        cout << "Shutting down jack client..." << endl;
         jack_client_close(client);
     }
     if (worker) {
@@ -39,14 +42,11 @@ static void signal_handler(int sig) {
 // Jack process callback
 static int process(jack_nframes_t nframes, void *arg) {
     if (!worker) return 0;
-    // give MIDI input to the worker
-    void* port_buf = jack_port_get_buffer(input_port, nframes);
-    worker->midiInput(port_buf, nframes);
     // call the worker's process function
-    worker->jackProcess(nframes);
-    // get MIDI output from the worker
-    port_buf = jack_port_get_buffer(output_port, nframes);
-    worker->midiOutput(port_buf, nframes);
+    void* input_port_buf = jack_port_get_buffer(input_port, nframes);
+    void* output_port_buf = jack_port_get_buffer(output_port, nframes);
+    void* cc_port_buf = jack_port_get_buffer(mod_cc_port, nframes);
+    worker->jackProcess(input_port_buf, output_port_buf, cc_port_buf, nframes);
     return 0;
 }
 
@@ -67,14 +67,23 @@ std::string getPort(std::string regEx, unsigned long flags) {
 
 // attempt to connect the ports
 bool connectPorts(std::string inputPortRegEx, std::string outputPortRegEx) {
-    std::cout << "attempting to connect ports..." << std::endl;
+    std::cout << "Attempting to connect ports..." << std::endl;
+    jack_port_t *inputPort = NULL;
+    std::string inputPortName;
     if (!jack_port_connected(input_port)) {
-        std::string inputPortName = getPort(inputPortRegEx, JackPortIsOutput);
+        inputPortName = getPort(inputPortRegEx, JackPortIsOutput);
         if (inputPortName.length() > 0) {
+            inputPort = jack_port_by_name(client, inputPortName.c_str());
             int retval = jack_connect(client, inputPortName.c_str(), jack_port_name(input_port));
             if (retval == 0) {
-                std::cout << "connected " << inputPortName << " to input port" << std::endl;
+                std::cout << "Connected " << inputPortName << " to input port" << std::endl;
+            } else {
+                std::cout << "connecting " << inputPortName << " to input port failed" << std::endl;
+                return false;
             }
+        } else {
+            std::cout << "Unable to find port matching " << inputPortRegEx << std::endl;
+            return false;
         }
     }
     if (!jack_port_connected(output_port)) {
@@ -82,11 +91,58 @@ bool connectPorts(std::string inputPortRegEx, std::string outputPortRegEx) {
         if (outputPortName.length() > 0) {
             int retval = jack_connect(client, jack_port_name(output_port), outputPortName.c_str());
             if (retval == 0) {
-                std::cout << "connected output port to " << outputPortName << std::endl;
+                std::cout << "Connected output port to " << outputPortName << std::endl;
+            } else {
+                std::cout << "Connecting " << outputPortName << " to output port failed" << std::endl;
+                return false;
             }
+        } else {
+            std::cout << "Unable to find port matching " << inputPortRegEx << std::endl;
+            return false;
         }
     }
-    if (!jack_port_connected(input_port) || !jack_port_connected(output_port)) return false;
+    // disconnect our input port from mod-host
+    if (!inputPort) {
+        std::cout << "This shouldn't happen, inputPort doesn't exist" << std::endl;
+        return false;
+    }
+    const char** ports = jack_port_get_all_connections(client, inputPort);
+    if (ports) {
+        int i=0;
+        while(ports[i] != NULL) {
+            std::string portName(ports[i]);
+            if (portName == "mod-host:midi_in") {
+                std::cout << "Input port is connected to mod-host:midi_in, disconnecting" << std::endl;
+                if (jack_disconnect(client, inputPortName.c_str(), "mod-host:midi_in") != 0) {
+                    std::cout << "Unable to disconnect input port from mod-host:midi_in" << std::endl;
+                    return false;
+                }
+                break;
+            }
+            i++;
+        }
+        jack_free(ports);
+    }
+    // connect our CC port to Mod
+    std::string ccPortName = "mod-host:midi_in";
+    //std::string ccPortName = "midi-monitor:input";
+    if (!jack_port_connected(mod_cc_port)) {
+        std::string modMidiInPortName = getPort(ccPortName, JackPortIsInput);
+        if (modMidiInPortName.length() > 0) {
+            int retval = jack_connect(client, jack_port_name(mod_cc_port), modMidiInPortName.c_str());
+            if (retval == 0) {
+                std::cout << "Connected CC port to " << modMidiInPortName << std::endl;
+            } else {
+                std::cout << "Connecting " << modMidiInPortName << " to CC port failed" << std::endl;
+                return false;
+            }
+        } else {
+            std::cout << "Unable to find port matching " << ccPortName << std::endl;
+            return false;
+        }
+    }
+    //if (!jack_port_connected(input_port) || !jack_port_connected(output_port)) return false;
+    if (!jack_port_connected(mod_cc_port)) return false;
     return true;
 }
 
@@ -171,22 +227,23 @@ int main(int argc, char** argv) {
     // start up our Jack client
     client = jack_client_open("ModMidi", JackNoStartServer, NULL);
     if (!client) {
-        cout << "unable to connect to jack server" << endl;
+        cout << "Unable to connect to jack server" << endl;
         return -1;
     }
 
     jack_set_process_callback(client, process, 0);
     input_port = jack_port_register(client, "input", JACK_DEFAULT_MIDI_TYPE, JackPortIsInput, 0);
-    output_port = jack_port_register(client, "output", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
+    output_port = jack_port_register(client, "output", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput | JackPortIsTerminal, 0);
+    mod_cc_port = jack_port_register(client, "mod_cc_output", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput | JackPortIsTerminal, 0);
     if (jack_activate(client)) {
-        cout << "unable to activate jack client" << endl;
+        cout << "Unable to activate jack client" << endl;
         jack_client_close(client);
         return -1;
     }
     // connect the ports
     string inputPort = optionInput.size() > 0 ? optionInput : "ttymidi:MIDI_in";
     string outputPort = optionOutput.size() > 0 ? optionOutput : "ttymidi:MIDI_out";
-    cout << "Attempting to connect to ports:" << endl << inputPort << endl << outputPort << endl;
+    cout << "Port names we're connecting to:" << endl << "  " << inputPort << endl << "  " << outputPort << endl;
     bool connected = connectPorts(inputPort, outputPort);
     if (!connected) {
         cout << "Unable to connect ports." << endl;
@@ -211,7 +268,7 @@ int main(int argc, char** argv) {
     delete worker;
     
     if (client != NULL) {
-        cout << "shutting down jack client..." << endl;
+        cout << "Shutting down jack client..." << endl;
         jack_client_close(client);
     }
 

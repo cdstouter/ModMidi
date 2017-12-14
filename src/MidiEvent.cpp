@@ -142,3 +142,7 @@ void MidiEvent::print() {
     }
     std::cout << " on channel " << (int)channel << ": " << (int)data1 << " " << (int)data2 << std::endl;
 }
+
+bool MidiEvent::comparator(const MidiEvent& a, const MidiEvent& b) {
+    return a.time < b.time;
+}

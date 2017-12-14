@@ -8,7 +8,8 @@
 #include "Worker.h"
 
 #include <iostream>
-#include <string.h>
+#include <algorithm>
+#include <string>
 #include <jansson.h>
 
 #include <jack/midiport.h>
@@ -50,46 +51,6 @@ void Worker::stop() {
     if (worker_thread.joinable()) worker_thread.join();
 }
 
-// called on the jack realtime thread
-bool Worker::midiInput(void* port_buf, jack_nframes_t nframes) {
-    jack_midi_event_t in_event;
-    jack_nframes_t event_count = jack_midi_get_event_count(port_buf);
-    if (event_count == 0) return true;
-
-    std::unique_lock<std::mutex> lock(m_midiInputEvents);
-    for (jack_nframes_t i=0; i<event_count; i++) {
-        jack_midi_event_get(&in_event, port_buf, i);
-        // filter out tap tempo button events & deal with them directly
-        MidiEvent e(in_event);
-        if (e.eventType == MidiEvent::CC && e.data1 == 104 && e.data2 == 11) {
-            tapTempoTap(e.time, nframes);
-        } else {
-            midiInputEvents.push_back(e);
-        }
-    }
-    return true;
-}
-
-// called on the jack realtime thread
-bool Worker::midiOutput(void* port_buf, jack_nframes_t nframes) {
-    std::unique_lock<std::mutex> lock(m_midiOutputEvents);
-    
-    jack_midi_clear_buffer(port_buf);
-    
-    while(midiOutputEvents.size() > 0) {
-        MidiEvent e = midiOutputEvents.front();
-        midiOutputEvents.pop_front();
-        std::vector<unsigned char> buf = e.getBuffer();
-        if (buf.size()) {
-            unsigned char* buffer = jack_midi_event_reserve(port_buf, e.time, buf.size());
-            for (size_t i=0; i<buf.size(); i++) {
-                buffer[i] = buf.at(i);
-            }
-        }
-    }
-    return true;
-}
-
 void Worker::doWork() {
     // variables used in the worker loop
     bool needsStatusUpdate;
@@ -114,7 +75,7 @@ void Worker::doWork() {
         }
         if (hasNewTempo) sendNewTempo(newTempo);
         std::this_thread::yield();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     cout << "thread exiting" << endl;
 }
@@ -173,11 +134,73 @@ void Worker::processMidi() {
 }
 
 // called from jack's realtime thread
-void Worker::jackProcess(jack_nframes_t nframes) {
+void Worker::jackProcess(void* input_port_buf, void* output_port_buf, void* cc_port_buf, jack_nframes_t nframes) {
+    jack_midi_clear_buffer(output_port_buf);
+    jack_midi_clear_buffer(cc_port_buf);
+    
+    jack_nframes_t in_event_count = jack_midi_get_event_count(input_port_buf);
+    
+    static std::deque<MidiEvent> midiCCEvents;
+    midiCCEvents.clear();
+
+    if (in_event_count > 0) {
+        jack_midi_event_t in_event;
+        static bool filtered;
+        std::unique_lock<std::mutex> lock(m_midiInputEvents);
+        for (jack_nframes_t i=0; i<in_event_count; i++) {
+            jack_midi_event_get(&in_event, input_port_buf, i);
+            MidiEvent e(in_event);
+            filtered = false;
+            // filter out tap tempo button events & deal with them directly
+            if (e.eventType == MidiEvent::CC && e.data1 == 104 && e.data2 == 11) {
+                tapTempoTap(e.time, nframes);
+                filtered = true;
+            }
+            // redirect pedal CCs to the CC output port
+            if (e.eventType == MidiEvent::CC && (e.data1 == 102 || e.data1 == 103)) {
+                std::cout << "cc event " << (int)e.data1 << " " << (int)e.data2 << std::endl;
+                e.data1 += 8;
+                midiCCEvents.push_back(e);
+                filtered = true;
+            }
+            if (!filtered) midiInputEvents.push_back(e);
+        }
+    }
+
     std::lock_guard<std::mutex> guard(m_midiOutputEvents);
     tapTempoProcess(nframes);
     auto temp = fcbLights.getMidiEvents();
     midiOutputEvents.insert(midiOutputEvents.end(), temp.begin(), temp.end());
+    
+    // jack requires us to sort midi events before sending them out
+    std::sort(midiOutputEvents.begin(), midiOutputEvents.end(), MidiEvent::comparator);
+    // cc port events are already in order
+    //std::sort(midiCCEvents.begin(), midiCCEvents.end(), MidiEvent::comparator);
+
+    while(midiOutputEvents.size() > 0) {
+        MidiEvent e = midiOutputEvents.front();
+        midiOutputEvents.pop_front();
+        std::vector<unsigned char> buf = e.getBuffer();
+        if (buf.size()) {
+            unsigned char* buffer = jack_midi_event_reserve(output_port_buf, e.time, buf.size());
+            for (size_t i=0; i<buf.size(); i++) {
+                buffer[i] = buf.at(i);
+            }
+        }
+    }
+    while(midiCCEvents.size() > 0) {
+        MidiEvent e = midiCCEvents.front();
+        std::cout << "cc event out " << (int)e.data1 << " " << (int)e.data2 << std::endl;
+        midiCCEvents.pop_front();
+        std::vector<unsigned char> buf = e.getBuffer();
+        if (buf.size()) {
+            unsigned char* buffer = jack_midi_event_reserve(cc_port_buf, e.time, buf.size());
+            for (size_t i=0; i<buf.size(); i++) {
+                buffer[i] = buf.at(i);
+            }
+        }
+    }
+
     {
         std::lock_guard<std::mutex> guard(m_nextStatusUpdate);
         if (nextStatusUpdate < nframes) {
