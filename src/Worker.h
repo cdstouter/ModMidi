@@ -41,9 +41,11 @@ private:
     std::mutex m_midiInputEvents, m_midiOutputEvents;
     jack_client_t *client;
     jack_port_t *inputPort, *outputPort;
-    void doWork();
+    void threadWork();
+    void statusUpdateThreadWork();
     void processMidi();
     std::thread worker_thread;
+    std::thread status_update_thread;
     bool worker_quit = false;
     
     bool needToUpdateLEDS = false;

@@ -42,12 +42,14 @@ Worker::~Worker() {
 
 void Worker::start() {
     worker_quit = false;
-    worker_thread = std::thread([=] {doWork();});
+    worker_thread = std::thread([=] {threadWork();});
+    status_update_thread = std::thread([=] {statusUpdateThreadWork();});
 }
 
 void Worker::stop() {
     worker_quit = true;
     if (worker_thread.joinable()) worker_thread.join();
+    if (status_update_thread.joinable()) status_update_thread.join();
 }
 
 // called on the jack realtime thread
@@ -90,21 +92,30 @@ bool Worker::midiOutput(void* port_buf, jack_nframes_t nframes) {
     return true;
 }
 
-void Worker::doWork() {
-    // variables used in the worker loop
+void Worker::statusUpdateThreadWork() {
+    // variable used in the status update thread loop
     bool needsStatusUpdate;
-    bool hasNewTempo;
-    double newTempo;
     // start the loop
     while(!worker_quit) {
-        // do midi events need to be processed?
-        processMidi();
         // do we need a status update?
         {
             std::lock_guard<std::mutex> guard(m_nextStatusUpdate);
             needsStatusUpdate = nextStatusUpdate == 0;
         }
         if (needsStatusUpdate) statusUpdate();
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    cout << "Status update thread exiting" << endl;
+}
+
+void Worker::threadWork() {
+    // variables used in the worker loop
+    bool hasNewTempo;
+    double newTempo;
+    // start the loop
+    while(!worker_quit) {
+        // do midi events need to be processed?
+        processMidi();
         // do we need to send the Mod the new tempo?
         {
             std::lock_guard<std::mutex> guard(m_tapTempo);
@@ -116,7 +127,7 @@ void Worker::doWork() {
         std::this_thread::yield();
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    cout << "thread exiting" << endl;
+    cout << "Thread exiting" << endl;
 }
 
 void Worker::sendNewTempo(double tempo) {
