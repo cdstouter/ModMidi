@@ -15,6 +15,7 @@
 #include <getopt.h>
 
 #include "Worker.h"
+#include "Utilities.h"
 
 using namespace std;
 
@@ -25,16 +26,7 @@ Worker *worker = NULL;
 
 static void signal_handler(int sig) {
     cerr << "Signal received, exiting ..." << endl;
-    if (client != NULL) {
-        cout << "Shutting down jack client..." << endl;
-        jack_client_close(client);
-        client = NULL;
-    }
-    if (worker) {
-        worker->stop();
-        delete worker;
-    }
-    exit(0);
+    signalQuit();
 }
 
 // Jack process callback
@@ -212,15 +204,18 @@ int main(int argc, char** argv) {
     }
     worker = workerTemp;
     workerTemp = NULL;
-    sleep(-1);
-    worker->stop();
-    delete worker;
+    
+    // wait for the quit flag
+    waitForQuit();
     
     if (client != NULL) {
         cout << "Shutting down jack client..." << endl;
         jack_client_close(client);
     }
 
+    worker->stop();
+    delete worker;
+    
     return 0;
 }
 

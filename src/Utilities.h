@@ -17,6 +17,10 @@ public:
     std::string bundle;
 };
 
+void signalQuit();
+
+void waitForQuit();
+
 bool sendMessage(int socket, std::mutex *mutex, std::string command, std::string data, std::string &response);
 
 bool getPedalboardList(int socket, std::mutex *socket_mutex, std::vector<ModPedalboard> &pedalboardList, std::mutex *mutex);

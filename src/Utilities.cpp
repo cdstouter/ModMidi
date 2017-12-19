@@ -14,6 +14,9 @@
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <chrono>
+#include <csignal>
+#include <unistd.h>
+#include <condition_variable>
 
 #include "Utilities.h"
 
@@ -25,6 +28,23 @@ void findAndReplaceAll(std::string &data, std::string toSearch, std::string repl
     }
 }
 
+static std::condition_variable c_quitFlag;
+static std::mutex m_quitFlag;
+static bool quitFlag = false;
+
+void signalQuit() {
+    {
+        std::lock_guard<std::mutex> guard(m_quitFlag);
+        quitFlag = true;
+    }
+    c_quitFlag.notify_all();
+}
+
+void waitForQuit() {
+    std::unique_lock<std::mutex> lock(m_quitFlag);
+    c_quitFlag.wait(lock, []{return quitFlag;});
+}
+
 bool sendMessage(int socket, std::mutex *mutex, std::string command, std::string data, std::string &response) {
     std::lock_guard<std::mutex> guard(*mutex);
     auto start = std::chrono::steady_clock::now();
@@ -33,6 +53,8 @@ bool sendMessage(int socket, std::mutex *mutex, std::string command, std::string
     message += "\n";
     if (send(socket, message.c_str(), message.length(), 0) < 0) {
         std::cout << "sendMessage: send failed" << std::endl;
+        // this probably means we disconnected from the server, and a restart is in order
+        signalQuit();
         return false;
     }
     
@@ -47,8 +69,10 @@ bool sendMessage(int socket, std::mutex *mutex, std::string command, std::string
     size_t bytes;
     while ((ret = poll(&fd, 1, 10000)) > 0) {
         bytes = recv(socket, server_reply, sizeof(server_reply), 0);
-        if (bytes < 0) {
+        if (bytes <= 0) {
             std::cout << "sendMessage: error while receiving from server" << std::endl;
+            // this probably means we disconnected from the server, and a restart is in order
+            signalQuit();
             return false;
         }
         std::string chunk(server_reply, bytes);
@@ -62,6 +86,8 @@ bool sendMessage(int socket, std::mutex *mutex, std::string command, std::string
     }
     if (ret <= 0) {
         std::cout << "sendMessage: error while receiving data from server" << std::endl;
+        // this probably means we disconnected from the server, and a restart is in order
+        signalQuit();
         return false;
     }
     
