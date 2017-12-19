@@ -8,8 +8,6 @@
 #ifndef UTILITIES_H
 #define UTILITIES_H
 
-#include "http_wrapper.h"
-
 #include <string>
 #include <mutex>
 
@@ -19,27 +17,21 @@ public:
     std::string bundle;
 };
 
-std::string urlEncode(const std::string &value);
+bool sendMessage(int socket, std::mutex *mutex, std::string command, std::string data, std::string &response);
 
-bool httpGet(std::string url, std::string *response, std::string *contentType);
+bool getPedalboardList(int socket, std::mutex *socket_mutex, std::vector<ModPedalboard> &pedalboardList, std::mutex *mutex);
 
-bool httpPost(std::string url, void const *data, size_t data_size, std::string *response, std::string *contentType);
+bool getPresetList(int socket, std::mutex *socket_mutex, std::vector<std::string> &presetList, std::mutex *mutex);
 
-bool modReset(std::string hostname);
+bool getCurrentPedalboardAndPreset(int socket, std::mutex *socket_mutex, std::vector<ModPedalboard> pedalboardList, int &currentPedalboard, int &currentPreset, unsigned int &pedalboardOffset, std::mutex *mutex);
 
-bool getPedalboardList(std::string hostname, std::vector<ModPedalboard> &pedalboardList, std::mutex *mutex);
+bool getCurrentBPM(int socket, std::mutex *socket_mutex, double &currentBPM, std::mutex *mutex);
 
-bool getPresetList(std::string hostname, std::vector<std::string> &presetList, std::mutex *mutex);
+bool setBPM(int socket, std::mutex *socket_mutex, double bpm);
 
-bool getCurrentPedalboardAndPreset(std::string hostname, std::vector<ModPedalboard> pedalboardList, int &currentPedalboard, int &currentPreset, unsigned int &pedalboardOffset, std::mutex *mutex);
+bool loadPreset(int socket, std::mutex *socket_mutex, int preset);
 
-bool getCurrentBPM(std::string hostname, double &currentBPM, std::mutex *mutex);
-
-bool setBPM(std::string hostname, double bpm);
-
-bool loadPreset(std::string hostname, int preset);
-
-bool loadPedalboard(std::string hostname, int pedalboard);
+bool loadPedalboard(int socket, std::mutex *socket_mutex, int pedalboard);
 
 #endif /* UTILITIES_H */
 

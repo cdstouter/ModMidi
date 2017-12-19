@@ -24,10 +24,11 @@ jack_port_t *input_port, *output_port;
 Worker *worker = NULL;
 
 static void signal_handler(int sig) {
-    cerr << "signal received, exiting ..." << endl;
+    cerr << "Signal received, exiting ..." << endl;
     if (client != NULL) {
-        cout << "shutting down jack client..." << endl;
+        cout << "Shutting down jack client..." << endl;
         jack_client_close(client);
+        client = NULL;
     }
     if (worker) {
         worker->stop();
@@ -92,7 +93,6 @@ bool connectPorts(std::string inputPortRegEx, std::string outputPortRegEx) {
 
 int main(int argc, char** argv) {
     
-    // try getopt
     static struct option long_options[] = {
         {"help", no_argument, NULL, 'h'},
         {"hostname", required_argument, NULL, 'n'},
@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
     bool optionDebug = false;
     bool optionSimulate = false;
     std::string optionHostname, optionInput, optionOutput;
-    while ((c = getopt_long(argc, argv, "hn:i:o:f", long_options, &option_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "hn:i:o:fds", long_options, &option_index)) != -1) {
         switch(c) {
             case 'h':
                 optionHelp = true;
@@ -203,7 +203,13 @@ int main(int argc, char** argv) {
     workerTemp->setSimulate(optionSimulate);
     workerTemp->setDebug(optionDebug);
     workerTemp->setTempoLight(optionFlash);
-    workerTemp->start();
+    if (!workerTemp->start()) {
+        cout << "Unable to start worker" << endl;
+        delete workerTemp;
+        cout << "Shutting down jack client..." << endl;
+        jack_client_close(client);
+        return -1;
+    }
     worker = workerTemp;
     workerTemp = NULL;
     sleep(-1);
@@ -211,7 +217,7 @@ int main(int argc, char** argv) {
     delete worker;
     
     if (client != NULL) {
-        cout << "shutting down jack client..." << endl;
+        cout << "Shutting down jack client..." << endl;
         jack_client_close(client);
     }
 

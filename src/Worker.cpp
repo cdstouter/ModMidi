@@ -13,6 +13,13 @@
 
 #include <jack/midiport.h>
 #include <valarray>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+
+#include <time.h>
 
 using namespace std;
 
@@ -40,10 +47,64 @@ Worker::~Worker() {
     stop();
 }
 
-void Worker::start() {
+bool Worker::start() {
+    // create socket
+    modSocket1 = socket(AF_INET, SOCK_STREAM, 0);
+    if (modSocket1 == -1) {
+        std::cout << "Could not create socket 1" << std::endl;
+        return false;
+    }
+    modSocket2 = socket(AF_INET, SOCK_STREAM, 0);
+    if (modSocket2 == -1) {
+        std::cout << "Could not create socket 2" << std::endl;
+        close(modSocket1);
+        return false;
+    }
+    // get the IP address from our hostname
+    addrinfo hints, *infoptr;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_INET;
+    int result = getaddrinfo(hostname.c_str(), NULL, &hints, &infoptr);
+    if (result) {
+        std::cout << "Unable to get IP address for hostname: " << gai_strerror(result) << std::endl;
+        close(modSocket1);
+        close(modSocket2);
+        return false;
+    }
+    bool connected = false;
+    struct addrinfo *p;
+    char host[256];
+    for (p = infoptr; p != NULL; p = p->ai_next) {
+        getnameinfo(p->ai_addr, p->ai_addrlen, host, sizeof(host), NULL, 0, NI_NUMERICHOST);
+        // try to connect to each IP address until we get one that works
+        struct sockaddr_in server;
+        server.sin_addr.s_addr = inet_addr(host);
+        server.sin_family = AF_INET;
+        server.sin_port = htons(7777);
+        if (connect(modSocket1, (struct sockaddr *) &server, sizeof(server)) >= 0) {
+            if (connect(modSocket2, (struct sockaddr *) &server, sizeof(server)) < 0) {
+                std::cout << "Unable to connect socket 2" << std::endl;
+                close(modSocket1);
+                return false;
+            }
+            std::cout << "Connected to Mod Duo using IP address " << host << std::endl;
+            connected = true;
+            break;
+        }
+    }
+    freeaddrinfo(infoptr);
+    if (!connected) {
+        std::cout << "Unable to connect to Mod Duo" << std::endl;
+        close(modSocket1);
+        close(modSocket2);
+        return false;
+    }
+
     worker_quit = false;
     worker_thread = std::thread([=] {threadWork();});
     status_update_thread = std::thread([=] {statusUpdateThreadWork();});
+    
+    return true;
 }
 
 void Worker::stop() {
@@ -135,7 +196,7 @@ void Worker::sendNewTempo(double tempo) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         std::cout << "sent new tempo: " << tempo << std::endl;
     } else {
-        setBPM(hostname, tempo);
+        setBPM(modSocket1, &m_modSocket1, tempo);
     }
 }
 
@@ -218,7 +279,7 @@ bool Worker::loadPedalboard(unsigned int pedalboard) {
         return true;
     } else {
         std::lock_guard<std::mutex> guard(m_status);
-        return ::loadPedalboard(hostname, pedalboard);
+        return ::loadPedalboard(modSocket1, &m_modSocket1, pedalboard);
     }
 }
 
@@ -234,7 +295,7 @@ bool Worker::loadPreset(unsigned int preset) {
         currentPreset = simulateCurrentPreset;
         return true;
     } else {
-        if (!::loadPreset(hostname, preset)) return false;
+        if (!::loadPreset(modSocket2, &m_modSocket2, preset)) return false;
         std::lock_guard<std::mutex> guard(m_status);
         currentPreset = preset;
         return true;
@@ -261,7 +322,7 @@ void Worker::statusUpdate() {
             pedalboardList.push_back(p);
         }
     } else {
-        status = getPedalboardList(hostname, pedalboardList, &m_status);
+        status = getPedalboardList(modSocket1, &m_modSocket1, pedalboardList, &m_status);
     }
     if (!status) std::cout << "Error getting current bank" << std::endl;
     if (debug) {
@@ -284,7 +345,7 @@ void Worker::statusUpdate() {
         presetList.push_back("OD");
         presetList.push_back("solo");
     } else {
-        status = getPresetList(hostname, presetList, &m_status);
+        status = getPresetList(modSocket1, &m_modSocket1, presetList, &m_status);
     }
     if (!status) std::cout << "Error getting preset list" << std::endl;
     if (debug) {
@@ -305,7 +366,7 @@ void Worker::statusUpdate() {
         currentPedalboard = simulateCurrentPedalboard;
         currentPreset = simulateCurrentPreset;
     } else {
-        status = getCurrentPedalboardAndPreset(hostname, pedalboardList, currentPedalboard, currentPreset, pedalboardOffset, &m_status);
+        status = getCurrentPedalboardAndPreset(modSocket1, &m_modSocket1, pedalboardList, currentPedalboard, currentPreset, pedalboardOffset, &m_status);
     }
     if (!status) std::cout << "Error getting current pedalboard & preset" << std::endl;
 
@@ -330,7 +391,7 @@ void Worker::statusUpdate() {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         bpm = simulateCurrentBPM;
     } else {
-        status = getCurrentBPM(hostname, bpm, NULL);
+        status = getCurrentBPM(modSocket1, &m_modSocket1, bpm, NULL);
     }
     if (status) {
         if (debug) {

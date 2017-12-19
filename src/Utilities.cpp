@@ -5,137 +5,84 @@
  * Created on December 11, 2017, 10:26 AM
  */
 
-#define HTTP_IMPLEMENTATION
-
 #include <string>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <vector>
 #include <jansson.h>
+#include <sys/poll.h>
+#include <sys/socket.h>
+#include <chrono>
 
 #include "Utilities.h"
 
-std::string urlEncode(const std::string &value) {
-    std::ostringstream escaped;
-    escaped.fill('0');
-    escaped << std::hex;
-
-    for (auto &c : value) {
-        // Keep alphanumeric and other accepted characters intact
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            escaped << c;
-            continue;
-        }
-        // Any other characters are percent-encoded
-        escaped << std::uppercase;
-        escaped << '%' << std::setw(2) << int((unsigned char) c);
-        escaped << std::nouppercase;
+void findAndReplaceAll(std::string &data, std::string toSearch, std::string replaceStr) {
+    size_t pos = data.find(toSearch);
+    while(pos != std::string::npos) {
+        data.replace(pos, toSearch.size(), replaceStr);
+        pos = data.find(toSearch, pos + toSearch.size());
     }
-
-    return escaped.str();
 }
 
-bool httpPost(std::string url, void const *data, size_t data_size, std::string *response, std::string *contentType) {
-    *contentType = "";
-    
-    http_t* request = http_post(url.c_str(), data, data_size, NULL);
-    if( !request ) {
-        *response = "error creating HTTP request";
+bool sendMessage(int socket, std::mutex *mutex, std::string command, std::string data, std::string &response) {
+    std::lock_guard<std::mutex> guard(*mutex);
+    auto start = std::chrono::steady_clock::now();
+    std::string message = command;
+    if (data.length() > 0) message += " " + data;
+    message += "\n";
+    if (send(socket, message.c_str(), message.length(), 0) < 0) {
+        std::cout << "sendMessage: send failed" << std::endl;
         return false;
     }
+    
+    struct pollfd fd;
+    int ret;
+    fd.fd = socket;
+    fd.events = POLLIN;
 
-    http_status_t status = HTTP_STATUS_PENDING;
-    int prev_size = -1;
-    while(status == HTTP_STATUS_PENDING) {
-        status = http_process(request);
-        if(prev_size != (int)request->response_size) {
-            prev_size = (int)request->response_size;
+    std::string return_data = "";
+    char server_reply[4096];
+    size_t pos;
+    size_t bytes;
+    while ((ret = poll(&fd, 1, 10000)) > 0) {
+        bytes = recv(socket, server_reply, sizeof(server_reply), 0);
+        if (bytes < 0) {
+            std::cout << "sendMessage: error while receiving from server" << std::endl;
+            return false;
+        }
+        std::string chunk(server_reply, bytes);
+        pos = chunk.find('\n');
+        if (pos == std::string::npos) {
+            return_data += chunk;
+        } else {
+            return_data += chunk.substr(0, pos);
+            break;
         }
     }
-
-    if(status == HTTP_STATUS_FAILED) {
-        *response = std::to_string(request->status_code) + ": " + request->reason_phrase;
-        http_release(request);
+    if (ret <= 0) {
+        std::cout << "sendMessage: error while receiving data from server" << std::endl;
         return false;
     }
     
-    *contentType = request->content_type;
-    *response = (char const *)request->response_data;
-
-    http_release(request);
+    // since we terminate with a newline, unescape any escaped newlines
+    findAndReplaceAll(return_data, "\\n", "\n");
+    
+    response = return_data;
+    auto end = std::chrono::steady_clock::now();
+    auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "sendMessage: " << command << " took " << diff.count() << " msec" << std::endl;
     return true;
 }
 
-bool httpGet(std::string url, std::string *response, std::string *contentType) {
-    *contentType = "";
-    
-    http_t* request = http_get(url.c_str(), NULL);
-    if( !request ) {
-        *response = "error creating HTTP request";
-        return false;
-    }
-
-    http_status_t status = HTTP_STATUS_PENDING;
-    int prev_size = -1;
-    while(status == HTTP_STATUS_PENDING) {
-        status = http_process(request);
-        if(prev_size != (int)request->response_size) {
-            prev_size = (int)request->response_size;
-        }
-    }
-
-    if(status == HTTP_STATUS_FAILED) {
-        *response = std::to_string(request->status_code) + ": " + request->reason_phrase;
-        http_release(request);
-        return false;
-    }
-    
-    *contentType = request->content_type;
-    *response = (char const *)request->response_data;
-
-    http_release(request);
-    return true;
-}
-
-bool modReset(std::string hostname) {
-    std::string response, contentType;
-    std::string url;
+bool getPedalboardList(int socket, std::mutex *socket_mutex, std::vector<ModPedalboard> &pedalboardList, std::mutex *mutex) {
+    std::string response;
     bool status;
     
     // get the current bank
-    url = "http://" + hostname + "/reset";
-    status = httpGet(url, &response, &contentType);
+    status = sendMessage(socket, socket_mutex, "get_bank", "", response);
     if (!status) {
-        std::cout << "modReset HTTP error: " << response << std::endl;
-        return false;
-    }
-    json_error_t err;
-    json_t *root = json_loads(response.c_str(), JSON_DECODE_ANY | JSON_DECODE_INT_AS_REAL, &err);
-    if (!root) {
-        std::cout << "modReset: unable to parse JSON" << std::endl;
-        return false;
-    }
-    if (!json_is_boolean(root)) {
-        std::cout << "modReset: root is not a boolean" << std::endl;
-        json_decref(root);
-        return false;
-    }
-    bool val = json_boolean_value(root);
-    json_decref(root);
-    return val;
-}
-
-bool getPedalboardList(std::string hostname, std::vector<ModPedalboard> &pedalboardList, std::mutex *mutex) {
-    std::string response, contentType;
-    std::string url;
-    bool status;
-    
-    // get the current bank
-    url = "http://" + hostname + "/banks/current";
-    status = httpGet(url, &response, &contentType);
-    if (!status) {
-        std::cout << "getPedalboardList HTTP error: " << response << std::endl;
+        std::cout << "getPedalboardList error" << std::endl;
         if (mutex) std::lock_guard<std::mutex> guard(*mutex);
         pedalboardList.clear();
         return false;
@@ -148,20 +95,30 @@ bool getPedalboardList(std::string hostname, std::vector<ModPedalboard> &pedalbo
         pedalboardList.clear();
         return false;
     }
-    if (json_is_null(root)) {
-        // current bank is empty
-        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
-        pedalboardList.clear();
-        json_decref(root);
-        return true;
-    } else if (!json_is_object(root)) {
-        std::cout << "getPedalboardList: JSON root is not object or null" << std::endl;
+    if (!json_is_object(root)) {
+        std::cout << "getPedalboardList: JSON root is not object" << std::endl;
         if (mutex) std::lock_guard<std::mutex> guard(*mutex);
         pedalboardList.clear();
         json_decref(root);
         return false;
     }
-    json_t *pedalboards = json_object_get(root, "pedalboards");
+    json_t *okay = json_object_get(root, "okay");
+    if (!okay || !json_is_boolean(okay) || !json_boolean_value(okay)) {
+        std::cout << "getPedalboardList: not okay" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        pedalboardList.clear();
+        json_decref(root);
+        return false;
+    }
+    json_t *bank = json_object_get(root, "bank");
+    if (!bank || !json_is_object(bank)) {
+        std::cout << "getPedalboardList: bank not found" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        pedalboardList.clear();
+        json_decref(root);
+        return false;
+    }
+    json_t *pedalboards = json_object_get(bank, "pedalboards");
     if (!pedalboards) {
         std::cout << "getPedalboardList: no pedalboards array" << std::endl;
         if (mutex) std::lock_guard<std::mutex> guard(*mutex);
@@ -215,16 +172,14 @@ bool getPedalboardList(std::string hostname, std::vector<ModPedalboard> &pedalbo
     return true;
 }
 
-bool getPresetList(std::string hostname, std::vector<std::string> &presetList, std::mutex *mutex) {
-    std::string response, contentType;
-    std::string url;
+bool getPresetList(int socket, std::mutex *socket_mutex, std::vector<std::string> &presetList, std::mutex *mutex) {
+    std::string response;
     bool status;
     
     // get the pedalboard preset list
-    url = "http://" + hostname + "/pedalpreset/list";
-    status = httpGet(url, &response, &contentType);
+    status = sendMessage(socket, socket_mutex, "get_presets", "", response);
     if (!status) {
-        std::cout << "getPresetList HTTP error: " << response << std::endl;
+        std::cout << "getPresetList error" << std::endl;
         if (mutex) std::lock_guard<std::mutex> guard(*mutex);
         presetList.clear();
         return false;
@@ -238,7 +193,23 @@ bool getPresetList(std::string hostname, std::vector<std::string> &presetList, s
         return false;
     }
     if (!json_is_object(root)) {
-        std::cout << "getPresetList: JSON root is not object or null" << std::endl;
+        std::cout << "getPresetList: JSON root is not object" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        presetList.clear();
+        json_decref(root);
+        return false;
+    }
+    json_t *okay = json_object_get(root, "okay");
+    if (!okay || !json_is_boolean(okay) || !json_boolean_value(okay)) {
+        std::cout << "getPresetList: not okay" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        presetList.clear();
+        json_decref(root);
+        return false;
+    }
+    json_t *presets = json_object_get(root, "presets");
+    if (!presets || !json_is_object(presets)) {
+        std::cout << "getPresetList: presets not found" << std::endl;
         if (mutex) std::lock_guard<std::mutex> guard(*mutex);
         presetList.clear();
         json_decref(root);
@@ -249,7 +220,7 @@ bool getPresetList(std::string hostname, std::vector<std::string> &presetList, s
     if (mutex) std::lock_guard<std::mutex> guard(*mutex);
     presetList.clear();
     for (int i=0; i<999; i++) {
-        json_t *preset = json_object_get(root, std::to_string(i).c_str());
+        json_t *preset = json_object_get(presets, std::to_string(i).c_str());
         if (!preset) break;
         if (!json_is_string(preset)) break;
         presetList.push_back(json_string_value(preset));
@@ -258,16 +229,14 @@ bool getPresetList(std::string hostname, std::vector<std::string> &presetList, s
     return true;
 }
 
-bool getCurrentPedalboardAndPreset(std::string hostname, std::vector<ModPedalboard> pedalboardList, int &currentPedalboard, int &currentPreset, unsigned int &pedalboardOffset, std::mutex *mutex) {
-    std::string response, contentType;
-    std::string url;
+bool getCurrentPedalboardAndPreset(int socket, std::mutex *socket_mutex, std::vector<ModPedalboard> pedalboardList, int &currentPedalboard, int &currentPreset, unsigned int &pedalboardOffset, std::mutex *mutex) {
+    std::string response;
     bool status;
     
     // get the pedalboard preset list
-    url = "http://" + hostname + "/pedalboard/current";
-    status = httpGet(url, &response, &contentType);
+    status = sendMessage(socket, socket_mutex, "get_pedalboard", "", response);
     if (!status) {
-        std::cout << "getCurrentPedalboardAndPreset HTTP error: " << response << std::endl;
+        std::cout << "getCurrentPedalboardAndPreset error" << std::endl;
         if (mutex) std::lock_guard<std::mutex> guard(*mutex);
         currentPedalboard = currentPreset = -1;
         return false;
@@ -287,8 +256,24 @@ bool getCurrentPedalboardAndPreset(std::string hostname, std::vector<ModPedalboa
         json_decref(root);
         return false;
     }
-    json_t *json_path = json_object_get(root, "path");
-    json_t *json_preset = json_object_get(root, "preset");
+    json_t *okay = json_object_get(root, "okay");
+    if (!okay || !json_is_boolean(okay) || !json_boolean_value(okay)) {
+        std::cout << "getCurrentPedalboardAndPreset: not okay" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        currentPedalboard = currentPreset = -1;
+        json_decref(root);
+        return false;
+    }
+    json_t *pedalboard = json_object_get(root, "pedalboard");
+    if (!pedalboard || !json_is_object(pedalboard)) {
+        std::cout << "getCurrentPedalboardAndPreset: pedalboard not found" << std::endl;
+        if (mutex) std::lock_guard<std::mutex> guard(*mutex);
+        currentPedalboard = currentPreset = -1;
+        json_decref(root);
+        return false;
+    }
+    json_t *json_path = json_object_get(pedalboard, "path");
+    json_t *json_preset = json_object_get(pedalboard, "preset");
     if (!json_path || !json_preset || !json_is_string(json_path) || !json_is_integer(json_preset)) {
         std::cout << "getCurrentPedalboardAndPreset: unable to find the correct data" << std::endl;
         if (mutex) std::lock_guard<std::mutex> guard(*mutex);
@@ -318,16 +303,14 @@ bool getCurrentPedalboardAndPreset(std::string hostname, std::vector<ModPedalboa
     return true;
 }
 
-bool getCurrentBPM(std::string hostname, double &currentBPM, std::mutex *mutex) {
-    std::string response, contentType;
-    std::string url;
+bool getCurrentBPM(int socket, std::mutex *socket_mutex, double &currentBPM, std::mutex *mutex) {
+    std::string response;
     bool status;
     
     // get the pedalboard preset list
-    url = "http://" + hostname + "/tempo/get";
-    status = httpGet(url, &response, &contentType);
+    status = sendMessage(socket, socket_mutex, "get_bpm", "", response);
     if (!status) {
-        std::cout << "getCurrentBPM HTTP error: " << response << std::endl;
+        std::cout << "getCurrentBPM error" << std::endl;
         return false;
     }
     json_error_t err;
@@ -336,76 +319,99 @@ bool getCurrentBPM(std::string hostname, double &currentBPM, std::mutex *mutex) 
         std::cout << "getCurrentBPM: unable to parse JSON" << std::endl;
         return false;
     }
-    if (!json_is_number(root)) {
-        std::cout << "getCurrentBPM: root is not a number" << std::endl;
+    if (!json_is_object(root)) {
+        std::cout << "getCurrentBPM: root is not an object" << std::endl;
+        json_decref(root);
+        return false;
+    }
+    json_t *okay = json_object_get(root, "okay");
+    if (!okay || !json_is_boolean(okay) || !json_boolean_value(okay)) {
+        std::cout << "getCurrentBPM: not okay" << std::endl;
+        json_decref(root);
+        return false;
+    }
+    json_t *bpm = json_object_get(root, "bpm");
+    if (!bpm || !json_is_number(bpm)) {
+        std::cout << "getCurrentBPM: bpm does not exist or is not a number" << std::endl;
         json_decref(root);
         return false;
     }
     if (mutex) std::lock_guard<std::mutex> guard(*mutex);
-    currentBPM = json_number_value(root);
+    currentBPM = json_number_value(bpm);
     json_decref(root);
     return true;
 }
 
-bool setBPM(std::string hostname, double bpm) {
-    std::string response, contentType;
-    std::string url;
+bool setBPM(int socket, std::mutex *socket_mutex, double bpm) {
+    std::string response;
     bool status;
     
     // get the pedalboard preset list
-    url = "http://" + hostname + "/tempo/set?bpm=" + std::to_string(bpm);
-    status = httpPost(url, NULL, 0, &response, &contentType);
+    status = sendMessage(socket, socket_mutex, "set_bpm", "{\"bpm\": " + std::to_string(bpm) + "}", response);
     if (!status) {
-        std::cout << "setBPM HTTP error: " << response << std::endl;
+        std::cout << "setBPM error" << std::endl;
         return false;
     }
     json_error_t err;
-    json_t *root = json_loads(response.c_str(), JSON_DECODE_ANY | JSON_DECODE_INT_AS_REAL, &err);
+    json_t *root = json_loads(response.c_str(), JSON_DECODE_ANY, &err);
     if (!root) {
         std::cout << "setBPM: unable to parse JSON" << std::endl;
         return false;
     }
-    if (!json_is_boolean(root)) {
-        std::cout << "setBPM: root is not a boolean" << std::endl;
+    if (!json_is_object(root)) {
+        std::cout << "setBPM: root is not an object" << std::endl;
+        json_decref(root);
+        return false;
+    }
+    json_t *okay = json_object_get(root, "okay");
+    if (!okay || !json_is_boolean(okay) || !json_boolean_value(okay)) {
+        std::cout << "setBPM: not okay" << std::endl;
         json_decref(root);
         return false;
     }
     json_decref(root);
-    return json_boolean_value(root);
-}
-
-bool loadPreset(std::string hostname, int preset) {
-    std::string response, contentType;
-    std::string url;
-    bool status;
-    
-    // get the pedalboard preset list
-    url = "http://" + hostname + "/pedalpreset/load?id=" + std::to_string(preset);
-    status = httpGet(url, &response, &contentType);
-    if (!status) {
-        std::cout << "loadPreset HTTP error: " << response << std::endl;
-        return false;
-    }
-    // mod-ui doesn't seem to return anything useful, so assume it went well if we don't
-    // get an HTTP error
     return true;
 }
 
-bool loadPedalboard(std::string hostname, int pedalboard) {
-    if (!modReset(hostname)) {
-        std::cout << "loadPedalboard: modReset failed" << std::endl;
-        return false;
-    }
-    
-    std::string response, contentType;
-    std::string url;
+bool loadPreset(int socket, std::mutex *socket_mutex, int preset) {
+    std::string response;
     bool status;
     
     // get the pedalboard preset list
-    url = "http://" + hostname + "/pedalboard/load_from_bank/?id=" + std::to_string(pedalboard);
-    status = httpPost(url, NULL, 0, &response, &contentType);
+    status = sendMessage(socket, socket_mutex, "load_preset", "{\"id\": " + std::to_string(preset) + "}", response);
     if (!status) {
-        std::cout << "loadPedalboard HTTP error: " << response << std::endl;
+        std::cout << "loadPreset error" << std::endl;
+        return false;
+    }
+    json_error_t err;
+    json_t *root = json_loads(response.c_str(), JSON_DECODE_ANY, &err);
+    if (!root) {
+        std::cout << "loadPreset: unable to parse JSON" << std::endl;
+        return false;
+    }
+    if (!json_is_object(root)) {
+        std::cout << "loadPreset: root is not an object" << std::endl;
+        json_decref(root);
+        return false;
+    }
+    json_t *okay = json_object_get(root, "okay");
+    if (!okay || !json_is_boolean(okay) || !json_boolean_value(okay)) {
+        std::cout << "loadPreset: not okay" << std::endl;
+        json_decref(root);
+        return false;
+    }
+    json_decref(root);
+    return true;
+}
+
+bool loadPedalboard(int socket, std::mutex *socket_mutex, int pedalboard) {
+    std::string response;
+    bool status;
+    
+    // get the pedalboard preset list
+    status = sendMessage(socket, socket_mutex, "load_pedalboard", "{\"id\": " + std::to_string(pedalboard) + "}", response);
+    if (!status) {
+        std::cout << "loadPedalboard error" << std::endl;
         return false;
     }
     json_error_t err;
@@ -414,12 +420,17 @@ bool loadPedalboard(std::string hostname, int pedalboard) {
         std::cout << "loadPedalboard: unable to parse JSON" << std::endl;
         return false;
     }
-    if (!json_is_boolean(root)) {
-        std::cout << "loadPedalboard: root is not a boolean" << std::endl;
+    if (!json_is_object(root)) {
+        std::cout << "loadPedalboard: root is not an object" << std::endl;
         json_decref(root);
         return false;
     }
-    bool val = json_boolean_value(root);
+    json_t *okay = json_object_get(root, "okay");
+    if (!okay || !json_is_boolean(okay) || !json_boolean_value(okay)) {
+        std::cout << "loadPedalboard: not okay" << std::endl;
+        json_decref(root);
+        return false;
+    }
     json_decref(root);
-    return val;
+    return true;
 }

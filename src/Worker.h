@@ -23,7 +23,7 @@ class Worker {
 public:
     Worker(jack_client_t *client, jack_port_t *inputPort, jack_port_t* outputPort);
     virtual ~Worker();
-    void start();
+    bool start();
     void stop();
     bool midiInput(void* port_buf, jack_nframes_t nframes);
     bool midiOutput(void* port_buf, jack_nframes_t nframes);
@@ -96,6 +96,11 @@ private:
 
     // is the tempo light enabled?
     bool tempoLightEnabled = false;
+    
+    // socket stuff
+    int modSocket1 = -1;
+    int modSocket2 = -1;
+    std::mutex m_modSocket1, m_modSocket2;
 };
 
 #endif /* WORKER_H */
