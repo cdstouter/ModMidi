@@ -3,9 +3,9 @@ CXX ?= g++
 RM ?= rm -f
 
 # library dependencies
-CXXFLAGS += -std=c++11 -Wall
+CXXFLAGS += -std=c++11 -Wall -g
 CXXFLAGS += `pkg-config --cflags jack jansson`
-LDFLAGS += `pkg-config --libs jack jansson`
+LDFLAGS += -g `pkg-config --libs jack jansson`
 
 SRCS=$(wildcard src/*.cpp)
 OBJS=$(subst .cpp,.o,$(SRCS))
